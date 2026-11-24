@@ -1,16 +1,22 @@
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
-from app.db import Base
-from app.keitaro import KeitaroError
+from app.db import Base, get_session
+from app.keitaro import KeitaroError, get_keitaro
+from app.main import app
 
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite://")
+    # One shared connection: TestClient runs the app in another thread.
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     Base.metadata.create_all(engine)
-    with Session(engine) as session:
+    with Session(engine, expire_on_commit=False) as session:
         yield session
 
 
@@ -54,3 +60,18 @@ class FakeKeitaro:
 @pytest.fixture
 def keitaro():
     return FakeKeitaro()
+
+
+@pytest.fixture
+def client(session, keitaro):
+    def request_session():
+        # Like get_session: whatever a failed request did not commit is thrown away.
+        try:
+            yield session
+        finally:
+            session.rollback()
+
+    app.dependency_overrides[get_session] = request_session
+    app.dependency_overrides[get_keitaro] = lambda: keitaro
+    yield TestClient(app)
+    app.dependency_overrides.clear()
