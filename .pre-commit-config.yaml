@@ -1,0 +1,64 @@
+# Install hooks: uv run --project backend pre-commit install
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents] # frontend/pnpm-lock.yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  - repo: local
+    hooks:
+      - id: no-ai-attribution
+        name: no AI attribution in commit message
+        language: pygrep
+        # Only attribution is blocked; a message may still mention Claude.
+        entry: '(?i)^[\w-]+-by:.*\b(claude|anthropic)\b|generated with .*\bclaude\b'
+        stages: [commit-msg]
+      - id: no-ai-author
+        name: no AI commit author
+        language: script
+        entry: scripts/check-author.sh
+        pass_filenames: false
+        always_run: true
+        stages: [commit-msg]
+
+      - id: frontend-typecheck
+        name: frontend typecheck (tsc)
+        language: system
+        entry: pnpm -C frontend typecheck
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+      - id: frontend-lint
+        name: frontend lint (oxlint)
+        language: system
+        entry: pnpm -C frontend lint
+        files: ^frontend/.*\.(ts|tsx|js)$
+        pass_filenames: false
+      - id: oxfmt
+        name: format check (oxfmt)
+        language: system
+        entry: pnpm -C frontend format:check
+        files: ^frontend/.*\.(ts|tsx|js|json|css|md|html)$
+        pass_filenames: false

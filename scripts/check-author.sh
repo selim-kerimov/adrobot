@@ -1,0 +1,8 @@
+#!/bin/sh
+# Block commits whose git author or committer is Claude/Anthropic.
+for ident in "$(git var GIT_AUTHOR_IDENT)" "$(git var GIT_COMMITTER_IDENT)"; do
+  if echo "$ident" | grep -qiE "claude|anthropic"; then
+    echo "commit author/committer must not be Claude/Anthropic: $ident"
+    exit 1
+  fi
+done
