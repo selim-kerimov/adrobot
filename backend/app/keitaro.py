@@ -2,6 +2,13 @@
 
 Only the calls the app needs. Responses are returned as plain dicts: Keitaro objects
 have many fields and we read just a few of them.
+
+Checked against the test instance:
+- PUT /streams/{id} with "offers" replaces the whole offer list of the stream.
+- Keitaro does not check that offer shares add up to 100: that is on us.
+- Errors come as {"error": "..."} (406 for validation, 404 for missing objects);
+  unknown routes answer FastAPI-style {"detail": "..."}.
+- Deleting a campaign deletes its streams too.
 """
 
 from collections.abc import Iterator
@@ -39,6 +46,9 @@ class KeitaroClient:
     def list_offers(self) -> list[Json]:
         return self._request("GET", "/offers")
 
+    def get_offer(self, offer_id: int) -> Json:
+        return self._request("GET", f"/offers/{offer_id}")
+
     def list_domains(self) -> list[Json]:
         return self._request("GET", "/domains")
 
@@ -55,6 +65,9 @@ class KeitaroClient:
 
     def create_campaign(self, data: Json) -> Json:
         return self._request("POST", "/campaigns", json=data)
+
+    def delete_campaign(self, campaign_id: int) -> Json:
+        return self._request("DELETE", f"/campaigns/{campaign_id}")
 
     def list_streams(self, campaign_id: int) -> list[Json]:
         return self._request("GET", f"/campaigns/{campaign_id}/streams")
@@ -84,8 +97,10 @@ def _error_text(response: httpx.Response) -> str:
         body = response.json()
     except ValueError:
         return response.text[:200]
-    if isinstance(body, dict) and "error" in body:
-        return str(body["error"])
+    if isinstance(body, dict):
+        for key in ("error", "detail"):
+            if key in body:
+                return str(body[key])
     return str(body)[:200]
 
 

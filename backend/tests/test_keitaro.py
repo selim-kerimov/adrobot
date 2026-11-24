@@ -40,6 +40,22 @@ def test_http_error_keeps_status_and_message():
     assert info.value.status_code == 404
 
 
+def test_validation_error_message_is_kept():
+    client = make_client(
+        lambda request: httpx.Response(406, json={"error": "offers: offer 9 does not exist"})
+    )
+
+    with pytest.raises(KeitaroError, match="406 offers: offer 9 does not exist"):
+        client.update_stream(1, {"offers": [{"offer_id": 9, "share": 100}]})
+
+
+def test_fastapi_style_error_is_understood():
+    client = make_client(lambda request: httpx.Response(404, json={"detail": "Not Found"}))
+
+    with pytest.raises(KeitaroError, match="404 Not Found"):
+        client.list_campaign_groups()
+
+
 def test_network_error_is_wrapped():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
