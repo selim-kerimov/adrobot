@@ -1,13 +1,17 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app import offers
+from app.campaigns.router import router as campaigns_router
 from app.editor.router import router as editor_router
 from app.editor.service import EditorError, NotFoundError
 from app.editor.weights import WeightError
 from app.keitaro import KeitaroError
 
 app = FastAPI(title="Adrobot")
+app.include_router(campaigns_router)
 app.include_router(editor_router)
+app.include_router(offers.router)
 
 
 def _error(status_code: int, message: str) -> JSONResponse:

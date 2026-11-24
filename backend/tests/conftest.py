@@ -27,6 +27,7 @@ class FakeKeitaro:
         self.offers = {id_: {"id": id_, "name": f"Offer {id_}"} for id_ in range(1, 10)}
         self.campaigns: dict[int, dict] = {}
         self.streams: dict[int, dict] = {}
+        self.fail_on_stream = False
 
     def add_campaign(self, campaign_id: int, streams: list[dict]) -> None:
         self.campaigns[campaign_id] = {"id": campaign_id, "name": f"campaign {campaign_id}"}
@@ -51,6 +52,31 @@ class FakeKeitaro:
         if offer_id not in self.offers:
             raise KeitaroError("Offer not found", status_code=404)
         return self.offers[offer_id]
+
+    def list_domains(self):
+        return [{"id": 1813, "name": "kt-emulator.test"}]
+
+    def list_campaign_groups(self):
+        return [{"id": 10332, "name": "FORTESTS"}]
+
+    def list_traffic_sources(self):
+        return [{"id": 836, "name": "FORTESTS"}]
+
+    def create_campaign(self, data):
+        campaign_id = max(self.campaigns, default=0) + 1
+        self.campaigns[campaign_id] = {"id": campaign_id, "alias": "abc123", **data}
+        return self.campaigns[campaign_id]
+
+    def delete_campaign(self, campaign_id):
+        self.streams = {k: s for k, s in self.streams.items() if s["campaign_id"] != campaign_id}
+        return self.campaigns.pop(campaign_id)
+
+    def create_stream(self, data):
+        if self.fail_on_stream:
+            raise KeitaroError("offers: offer does not exist", status_code=406)
+        stream_id = max(self.streams, default=0) + 1
+        self.streams[stream_id] = {"id": stream_id, "offers": [], **data}
+        return self.streams[stream_id]
 
     def update_stream(self, stream_id, data):
         self.streams[stream_id].update(data)

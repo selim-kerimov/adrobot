@@ -12,9 +12,10 @@ Checked against the test instance:
 """
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
+from fastapi import Depends
 
 from app.config import settings
 
@@ -111,3 +112,6 @@ def get_keitaro() -> Iterator[KeitaroClient]:
         yield client
     finally:
         client.close()
+
+
+KeitaroDep = Annotated[KeitaroClient, Depends(get_keitaro)]

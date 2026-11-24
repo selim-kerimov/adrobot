@@ -1,19 +1,13 @@
-from typing import Annotated
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import SessionDep
 from app.editor import service
 from app.editor.models import Campaign, Stream
 from app.editor.schemas import AddOfferIn, CampaignOut, CampaignSummary, PinIn, StreamOut
-from app.keitaro import KeitaroClient, get_keitaro
+from app.keitaro import KeitaroDep
 
 router = APIRouter(prefix="/api", tags=["editor"])
-
-SessionDep = Annotated[Session, Depends(get_session)]
-KeitaroDep = Annotated[KeitaroClient, Depends(get_keitaro)]
 
 
 @router.get("/campaigns", response_model=list[CampaignSummary])
