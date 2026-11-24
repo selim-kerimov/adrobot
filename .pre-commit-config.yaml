@@ -46,6 +46,13 @@ repos:
         always_run: true
         stages: [commit-msg]
 
+      - id: backend-tests
+        name: backend tests (pytest)
+        language: system
+        entry: uv run --project backend pytest -q backend
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
       - id: frontend-typecheck
         name: frontend typecheck (tsc)
         language: system
