@@ -4,6 +4,7 @@ Functions change the session but do not commit: the caller commits once the whol
 operation succeeded, so a failed step leaves nothing half-done in the database.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -11,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.editor.models import Campaign, OfferState, Stream, StreamOffer
 from app.editor.weights import Slot, rebalance
-from app.keitaro import Json, KeitaroClient
+from app.keitaro import Json, KeitaroClient, KeitaroError, Switch
+from app.offers import find_offer, list_offers
 
 
 class NotFoundError(LookupError):
@@ -20,6 +22,41 @@ class NotFoundError(LookupError):
 
 class EditorError(ValueError):
     """The operation makes no sense for the current state (e.g. the offer is already there)."""
+
+
+def list_campaigns(session: Session, keitaro: KeitaroClient) -> list[Json]:
+    """All campaigns from Keitaro. Local copies of campaigns deleted there are dropped."""
+    remote = _all_campaigns(keitaro)
+    remote_ids = {campaign["id"] for campaign in remote}
+    local = {campaign.keitaro_id: campaign for campaign in session.scalars(select(Campaign))}
+    for keitaro_id, campaign in local.items():
+        if keitaro_id not in remote_ids:
+            session.delete(campaign)
+
+    return [
+        {
+            "keitaro_id": campaign["id"],
+            "name": campaign["name"],
+            "state": campaign["state"],
+            "synced_at": local[campaign["id"]].synced_at if campaign["id"] in local else None,
+        }
+        for campaign in sorted(remote, key=lambda campaign: campaign["id"], reverse=True)
+    ]
+
+
+def _all_campaigns(keitaro: KeitaroClient, page: int = 100) -> list[Json]:
+    campaigns: list[Json] = []
+    while True:
+        batch = keitaro.list_campaigns(offset=len(campaigns), limit=page)
+        campaigns.extend(batch)
+        if len(batch) < page:
+            return campaigns
+
+
+def forget_campaign(session: Session, campaign_id: int) -> None:
+    campaign = session.scalar(select(Campaign).where(Campaign.keitaro_id == campaign_id))
+    if campaign is not None:
+        session.delete(campaign)
 
 
 def get_campaign(session: Session, campaign_id: int) -> Campaign:
@@ -52,9 +89,10 @@ def fetch_campaign(session: Session, keitaro: KeitaroClient, campaign_id: int) -
         session.add(campaign)
     campaign.name = data["name"]
     campaign.alias = data.get("alias")
+    campaign.state = data["state"]
     campaign.synced_at = datetime.now(UTC)
 
-    offer_names = {offer["id"]: offer["name"] for offer in keitaro.list_offers()}
+    offer_names = {offer["id"]: offer["name"] for offer in list_offers(keitaro)}
     remote_streams = keitaro.list_streams(campaign_id)
     remote_ids = {stream["id"] for stream in remote_streams}
 
@@ -68,13 +106,24 @@ def fetch_campaign(session: Session, keitaro: KeitaroClient, campaign_id: int) -
         if stream is None:
             stream = Stream(keitaro_id=remote["id"])
             campaign.streams.append(stream)
-        stream.name = remote["name"]
-        stream.position = remote["position"]
-        _sync_offers(stream, remote["offers"], offer_names)
-        stream.has_offers = bool(stream.offers)
+        _sync_stream(stream, remote, offer_names)
 
     session.flush()
     return campaign
+
+
+def refresh_stream(keitaro: KeitaroClient, stream: Stream) -> None:
+    """Reloads one stream from Keitaro, like fetch_campaign does for all of them."""
+    offer_names = {offer["id"]: offer["name"] for offer in list_offers(keitaro)}
+    _sync_stream(stream, keitaro.get_stream(stream.keitaro_id), offer_names)
+
+
+def _sync_stream(stream: Stream, remote: Json, offer_names: dict[int, str]) -> None:
+    stream.name = remote["name"]
+    stream.position = remote["position"]
+    stream.state = remote["state"]
+    _sync_offers(stream, remote["offers"], offer_names)
+    stream.has_offers = bool(stream.offers)
 
 
 def _sync_offers(stream: Stream, remote_offers: list[Json], offer_names: dict[int, str]) -> None:
@@ -99,6 +148,38 @@ def _sync_offers(stream: Stream, remote_offers: list[Json], offer_names: dict[in
         stream.offers.append(offer)
 
 
+def rename_campaign(keitaro: KeitaroClient, campaign: Campaign, name: str) -> None:
+    campaign.name = keitaro.update_campaign(campaign.keitaro_id, {"name": name})["name"]
+
+
+def switch_campaign(keitaro: KeitaroClient, campaign: Campaign, switch: Switch) -> None:
+    campaign.state = keitaro.switch_campaign(campaign.keitaro_id, switch)["state"]
+
+
+def delete_campaign(session: Session, keitaro: KeitaroClient, campaign: Campaign) -> None:
+    """Deletes the campaign with its streams in Keitaro. Keitaro has no archive for it."""
+    _delete_remote(keitaro.delete_campaign, campaign.keitaro_id)
+    session.delete(campaign)
+
+
+def switch_stream(keitaro: KeitaroClient, stream: Stream, switch: Switch) -> None:
+    stream.state = keitaro.switch_stream(stream.keitaro_id, switch)["state"]
+
+
+def delete_stream(keitaro: KeitaroClient, stream: Stream) -> None:
+    _delete_remote(keitaro.delete_stream, stream.keitaro_id)
+    stream.campaign.streams.remove(stream)
+
+
+def _delete_remote(delete: Callable[[int], Json], keitaro_id: int) -> None:
+    try:
+        delete(keitaro_id)
+    except KeitaroError as error:
+        # Already deleted there: that is what we wanted.
+        if error.status_code != 404:
+            raise
+
+
 def add_offer(keitaro: KeitaroClient, stream: Stream, offer_id: int) -> None:
     _require_offers(stream)
     existing = next((offer for offer in stream.offers if offer.offer_id == offer_id), None)
@@ -108,7 +189,7 @@ def add_offer(keitaro: KeitaroClient, stream: Stream, offer_id: int) -> None:
             return
         raise EditorError(f"offer {offer_id} is already in the stream")
 
-    data = keitaro.get_offer(offer_id)
+    data = find_offer(keitaro, offer_id)
     # Column defaults apply only on flush, and the rebalance below needs the state now.
     stream.offers.append(
         StreamOffer(

@@ -76,9 +76,7 @@ def test_offer_search():
     assert len(offers.search_offers(catalog, "", 2)) == 2
 
 
-def test_offers_endpoint(client, monkeypatch):
-    monkeypatch.setattr(offers, "_cache", None)
-
+def test_offers_endpoint(client):
     response = client.get("/api/offers", params={"q": "offer 7"})
 
     assert response.json() == [{"id": 7, "name": "Offer 7"}]

@@ -24,22 +24,33 @@ class StreamOut(BaseModel):
     keitaro_id: int
     name: str
     position: int
+    state: str
     has_offers: bool
     is_draft: bool
     offers: list[StreamOfferOut]
 
 
-class CampaignSummary(BaseModel):
+class CampaignListItem(BaseModel):
+    keitaro_id: int
+    name: str
+    state: str
+    # None while the campaign has never been loaded into the editor.
+    synced_at: datetime | None
+
+
+class CampaignOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     keitaro_id: int
     name: str
     alias: str | None
+    state: str
     synced_at: datetime | None
-
-
-class CampaignOut(CampaignSummary):
     streams: list[StreamOut]
+
+
+class CampaignUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
 
 
 class AddOfferIn(BaseModel):

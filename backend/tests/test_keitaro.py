@@ -62,3 +62,28 @@ def test_network_error_is_wrapped():
 
     with pytest.raises(KeitaroError, match="unreachable"):
         make_client(handler).list_domains()
+
+
+@pytest.mark.parametrize(
+    ("call", "method", "path"),
+    [
+        (lambda c: c.list_campaigns(offset=100, limit=50), "GET", "/campaigns?offset=100&limit=50"),
+        (lambda c: c.update_campaign(5, {"name": "x"}), "PUT", "/campaigns/5"),
+        (lambda c: c.switch_campaign(5, "disable"), "POST", "/campaigns/5/disable"),
+        (lambda c: c.delete_campaign(5), "DELETE", "/campaigns/5"),
+        (lambda c: c.get_stream(7), "GET", "/streams/7"),
+        (lambda c: c.switch_stream(7, "enable"), "POST", "/streams/7/enable"),
+        (lambda c: c.delete_stream(7), "DELETE", "/streams/7"),
+    ],
+)
+def test_routes(call, method, path):
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    call(make_client(handler))
+
+    assert seen[0].method == method
+    assert str(seen[0].url) == f"https://keitaro.test/admin_api/v1{path}"

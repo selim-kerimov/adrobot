@@ -8,6 +8,7 @@ from app.campaigns.schemas import CampaignCreate, CampaignOptions
 from app.editor import service as editor
 from app.editor.models import Campaign
 from app.keitaro import KeitaroClient, KeitaroError
+from app.offers import find_offer
 
 GEO_REDIRECT_URL = "https://google.com"
 
@@ -23,7 +24,7 @@ def get_options(keitaro: KeitaroClient) -> CampaignOptions:
 
 
 def create_campaign(session: Session, keitaro: KeitaroClient, data: CampaignCreate) -> Campaign:
-    keitaro.get_offer(data.offer_id)  # fails with 404 before anything is created
+    find_offer(keitaro, data.offer_id)  # fails with 404 before anything is created
 
     campaign = keitaro.create_campaign(
         {

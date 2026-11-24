@@ -1,4 +1,5 @@
-"""Offer search for autocomplete. Keitaro has no search, so the list is cached and filtered here."""
+"""Offer catalog. Keitaro has no search, so the list is cached and filtered here; the
+cache also gives offer names without a request to Keitaro."""
 
 import time
 from typing import Annotated
@@ -25,6 +26,14 @@ def list_offers(keitaro: KeitaroClient) -> list[Json]:
     if _cache is None or time.monotonic() - _cache[0] > CACHE_SECONDS:
         _cache = (time.monotonic(), keitaro.list_offers())
     return _cache[1]
+
+
+def find_offer(keitaro: KeitaroClient, offer_id: int) -> Json:
+    """Takes the offer from the cached list; asks Keitaro only for offers added since."""
+    for offer in list_offers(keitaro):
+        if offer["id"] == offer_id:
+            return offer
+    return keitaro.get_offer(offer_id)
 
 
 def search_offers(offers: list[Json], query: str, limit: int) -> list[Json]:

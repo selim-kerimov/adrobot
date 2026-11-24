@@ -28,6 +28,8 @@ class Campaign(Base):
     keitaro_id: Mapped[int] = mapped_column(unique=True)
     name: Mapped[str] = mapped_column(String(255))
     alias: Mapped[str | None] = mapped_column(String(64))
+    # "active" or "disabled", as Keitaro has it.
+    state: Mapped[str] = mapped_column(String(16), default="active", server_default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -46,6 +48,7 @@ class Stream(Base):
     keitaro_id: Mapped[int] = mapped_column(unique=True)
     name: Mapped[str] = mapped_column(String(255))
     position: Mapped[int] = mapped_column(default=0)
+    state: Mapped[str] = mapped_column(String(16), default="active", server_default="active")
     # Streams without offers (e.g. a redirect to google) are shown by name only.
     has_offers: Mapped[bool] = mapped_column(default=False)
 

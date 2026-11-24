@@ -4,9 +4,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app import offers
 from app.db import Base, get_session
 from app.keitaro import KeitaroError, get_keitaro
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def empty_offer_cache(monkeypatch):
+    monkeypatch.setattr(offers, "_cache", None)
 
 
 @pytest.fixture
@@ -20,6 +26,9 @@ def session():
         yield session
 
 
+STATES = {"enable": "active", "disable": "disabled"}
+
+
 class FakeKeitaro:
     """Keeps campaigns and streams in memory and answers like the test instance."""
 
@@ -30,17 +39,50 @@ class FakeKeitaro:
         self.fail_on_stream = False
 
     def add_campaign(self, campaign_id: int, streams: list[dict]) -> None:
-        self.campaigns[campaign_id] = {"id": campaign_id, "name": f"campaign {campaign_id}"}
+        self.campaigns[campaign_id] = {
+            "id": campaign_id,
+            "name": f"campaign {campaign_id}",
+            "state": "active",
+        }
         for stream in streams:
-            self.streams[stream["id"]] = {"campaign_id": campaign_id, "offers": [], **stream}
+            self.streams[stream["id"]] = {
+                "campaign_id": campaign_id,
+                "state": "active",
+                "offers": [],
+                **stream,
+            }
 
     def shares(self, stream_id: int) -> dict[int, int]:
         return {offer["offer_id"]: offer["share"] for offer in self.streams[stream_id]["offers"]}
+
+    def list_campaigns(self, offset=0, limit=100):
+        return list(self.campaigns.values())[offset : offset + limit]
 
     def get_campaign(self, campaign_id):
         if campaign_id not in self.campaigns:
             raise KeitaroError("Campaign not found", status_code=404)
         return self.campaigns[campaign_id]
+
+    def update_campaign(self, campaign_id, data):
+        self.get_campaign(campaign_id).update(data)
+        return self.campaigns[campaign_id]
+
+    def switch_campaign(self, campaign_id, switch):
+        self.get_campaign(campaign_id)["state"] = STATES[switch]
+        return self.campaigns[campaign_id]
+
+    def get_stream(self, stream_id):
+        if stream_id not in self.streams:
+            raise KeitaroError("Stream not found", status_code=404)
+        return self.streams[stream_id]
+
+    def switch_stream(self, stream_id, switch):
+        self.get_stream(stream_id)["state"] = STATES[switch]
+        return self.streams[stream_id]
+
+    def delete_stream(self, stream_id):
+        self.get_stream(stream_id)
+        return self.streams.pop(stream_id)
 
     def list_streams(self, campaign_id):
         return [s for s in self.streams.values() if s["campaign_id"] == campaign_id]
@@ -64,10 +106,16 @@ class FakeKeitaro:
 
     def create_campaign(self, data):
         campaign_id = max(self.campaigns, default=0) + 1
-        self.campaigns[campaign_id] = {"id": campaign_id, "alias": "abc123", **data}
+        self.campaigns[campaign_id] = {
+            "id": campaign_id,
+            "alias": "abc123",
+            "state": "active",
+            **data,
+        }
         return self.campaigns[campaign_id]
 
     def delete_campaign(self, campaign_id):
+        self.get_campaign(campaign_id)
         self.streams = {k: s for k, s in self.streams.items() if s["campaign_id"] != campaign_id}
         return self.campaigns.pop(campaign_id)
 
@@ -75,7 +123,7 @@ class FakeKeitaro:
         if self.fail_on_stream:
             raise KeitaroError("offers: offer does not exist", status_code=406)
         stream_id = max(self.streams, default=0) + 1
-        self.streams[stream_id] = {"id": stream_id, "offers": [], **data}
+        self.streams[stream_id] = {"id": stream_id, "state": "active", "offers": [], **data}
         return self.streams[stream_id]
 
     def update_stream(self, stream_id, data):

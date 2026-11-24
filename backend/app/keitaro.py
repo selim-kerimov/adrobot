@@ -1,6 +1,6 @@
 """Thin client for the Keitaro Admin API (v1).
 
-Only the calls the app needs. Responses are returned as plain dicts: Keitaro objects
+Covers every route of the test instance. Responses are returned as plain dicts: Keitaro objects
 have many fields and we read just a few of them.
 
 Checked against the test instance:
@@ -9,10 +9,11 @@ Checked against the test instance:
 - Errors come as {"error": "..."} (406 for validation, 404 for missing objects);
   unknown routes answer FastAPI-style {"detail": "..."}.
 - Deleting a campaign deletes its streams too.
+- POST /campaigns/{id}/enable|disable and /streams/{id}/enable|disable return the object.
 """
 
-from collections.abc import Iterator
-from typing import Annotated, Any
+from functools import cache
+from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import Depends
@@ -20,6 +21,7 @@ from fastapi import Depends
 from app.config import settings
 
 Json = dict[str, Any]
+Switch = Literal["enable", "disable"]
 
 
 class KeitaroError(Exception):
@@ -38,9 +40,6 @@ class KeitaroClient:
             timeout=30,
             transport=transport,
         )
-
-    def close(self) -> None:
-        self._http.close()
 
     # Lookups
 
@@ -61,11 +60,21 @@ class KeitaroClient:
 
     # Campaigns and streams
 
+    def list_campaigns(self, offset: int = 0, limit: int = 100) -> list[Json]:
+        return self._request("GET", "/campaigns", params={"offset": offset, "limit": limit})
+
     def get_campaign(self, campaign_id: int) -> Json:
         return self._request("GET", f"/campaigns/{campaign_id}")
 
     def create_campaign(self, data: Json) -> Json:
         return self._request("POST", "/campaigns", json=data)
+
+    def update_campaign(self, campaign_id: int, data: Json) -> Json:
+        """Changes only the fields that are sent."""
+        return self._request("PUT", f"/campaigns/{campaign_id}", json=data)
+
+    def switch_campaign(self, campaign_id: int, switch: Switch) -> Json:
+        return self._request("POST", f"/campaigns/{campaign_id}/{switch}")
 
     def delete_campaign(self, campaign_id: int) -> Json:
         return self._request("DELETE", f"/campaigns/{campaign_id}")
@@ -73,11 +82,20 @@ class KeitaroClient:
     def list_streams(self, campaign_id: int) -> list[Json]:
         return self._request("GET", f"/campaigns/{campaign_id}/streams")
 
+    def get_stream(self, stream_id: int) -> Json:
+        return self._request("GET", f"/streams/{stream_id}")
+
     def create_stream(self, data: Json) -> Json:
         return self._request("POST", "/streams", json=data)
 
     def update_stream(self, stream_id: int, data: Json) -> Json:
         return self._request("PUT", f"/streams/{stream_id}", json=data)
+
+    def switch_stream(self, stream_id: int, switch: Switch) -> Json:
+        return self._request("POST", f"/streams/{stream_id}/{switch}")
+
+    def delete_stream(self, stream_id: int) -> Json:
+        return self._request("DELETE", f"/streams/{stream_id}")
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         try:
@@ -105,13 +123,12 @@ def _error_text(response: httpx.Response) -> str:
     return str(body)[:200]
 
 
-def get_keitaro() -> Iterator[KeitaroClient]:
-    """FastAPI dependency."""
-    client = KeitaroClient(settings.keitaro_url, settings.keitaro_api_key)
-    try:
-        yield client
-    finally:
-        client.close()
+@cache
+def get_keitaro() -> KeitaroClient:
+    """FastAPI dependency. One client for the whole app keeps connections open, so
+    requests after the first one skip the TLS handshake (the test instance needs seconds).
+    """
+    return KeitaroClient(settings.keitaro_url, settings.keitaro_api_key)
 
 
 KeitaroDep = Annotated[KeitaroClient, Depends(get_keitaro)]

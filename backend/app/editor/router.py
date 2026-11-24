@@ -1,18 +1,26 @@
 from fastapi import APIRouter
-from sqlalchemy import select
 
 from app.db import SessionDep
 from app.editor import service
 from app.editor.models import Campaign, Stream
-from app.editor.schemas import AddOfferIn, CampaignOut, CampaignSummary, PinIn, StreamOut
-from app.keitaro import KeitaroDep
+from app.editor.schemas import (
+    AddOfferIn,
+    CampaignListItem,
+    CampaignOut,
+    CampaignUpdate,
+    PinIn,
+    StreamOut,
+)
+from app.keitaro import Json, KeitaroDep, KeitaroError, Switch
 
 router = APIRouter(prefix="/api", tags=["editor"])
 
 
-@router.get("/campaigns", response_model=list[CampaignSummary])
-def list_campaigns(session: SessionDep) -> list[Campaign]:
-    return list(session.scalars(select(Campaign).order_by(Campaign.created_at.desc())))
+@router.get("/campaigns", response_model=list[CampaignListItem])
+def list_campaigns(session: SessionDep, keitaro: KeitaroDep) -> list[Json]:
+    campaigns = service.list_campaigns(session, keitaro)
+    session.commit()
+    return campaigns
 
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignOut)
@@ -22,9 +30,54 @@ def get_campaign(campaign_id: int, session: SessionDep) -> Campaign:
 
 @router.post("/campaigns/{campaign_id}/fetch", response_model=CampaignOut)
 def fetch_campaign(campaign_id: int, session: SessionDep, keitaro: KeitaroDep) -> Campaign:
-    campaign = service.fetch_campaign(session, keitaro, campaign_id)
+    try:
+        campaign = service.fetch_campaign(session, keitaro, campaign_id)
+    except KeitaroError as error:
+        if error.status_code == 404:
+            # Deleted in Keitaro: drop our copy too, the error still goes to the client.
+            service.forget_campaign(session, campaign_id)
+            session.commit()
+        raise
     session.commit()
     return campaign
+
+
+@router.patch("/campaigns/{campaign_id}", response_model=CampaignOut)
+def update_campaign(
+    campaign_id: int, body: CampaignUpdate, session: SessionDep, keitaro: KeitaroDep
+) -> Campaign:
+    campaign = service.get_campaign(session, campaign_id)
+    service.rename_campaign(keitaro, campaign, body.name)
+    session.commit()
+    return campaign
+
+
+@router.delete("/campaigns/{campaign_id}", status_code=204)
+def delete_campaign(campaign_id: int, session: SessionDep, keitaro: KeitaroDep) -> None:
+    campaign = service.get_campaign(session, campaign_id)
+    service.delete_campaign(session, keitaro, campaign)
+    session.commit()
+
+
+@router.post("/streams/{stream_id}/fetch", response_model=StreamOut)
+def fetch_stream(stream_id: int, session: SessionDep, keitaro: KeitaroDep) -> Stream:
+    stream = service.get_stream(session, stream_id)
+    try:
+        service.refresh_stream(keitaro, stream)
+    except KeitaroError as error:
+        if error.status_code == 404:
+            stream.campaign.streams.remove(stream)
+            session.commit()
+        raise
+    session.commit()
+    return stream
+
+
+@router.delete("/streams/{stream_id}", status_code=204)
+def delete_stream(stream_id: int, session: SessionDep, keitaro: KeitaroDep) -> None:
+    stream = service.get_stream(session, stream_id)
+    service.delete_stream(keitaro, stream)
+    session.commit()
 
 
 @router.post("/streams/{stream_id}/offers", response_model=StreamOut)
@@ -81,3 +134,26 @@ def unpin_offer(offer_id: int, session: SessionDep) -> Stream:
     service.unpin_offer(offer)
     session.commit()
     return offer.stream
+
+
+# Last on purpose: {switch} would also catch /fetch, /push and /cancel and answer 422.
+
+
+@router.post("/campaigns/{campaign_id}/{switch}", response_model=CampaignOut)
+def switch_campaign(
+    campaign_id: int, switch: Switch, session: SessionDep, keitaro: KeitaroDep
+) -> Campaign:
+    campaign = service.get_campaign(session, campaign_id)
+    service.switch_campaign(keitaro, campaign, switch)
+    session.commit()
+    return campaign
+
+
+@router.post("/streams/{stream_id}/{switch}", response_model=StreamOut)
+def switch_stream(
+    stream_id: int, switch: Switch, session: SessionDep, keitaro: KeitaroDep
+) -> Stream:
+    stream = service.get_stream(session, stream_id)
+    service.switch_stream(keitaro, stream, switch)
+    session.commit()
+    return stream
