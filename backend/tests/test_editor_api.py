@@ -141,7 +141,7 @@ def test_rename_campaign(client, keitaro, campaign):
 
     assert response.json()["name"] == "test_kerimov_renamed"
     assert keitaro.campaigns[10]["name"] == "test_kerimov_renamed"
-    assert client.patch("/api/campaigns/10", json={"name": ""}).status_code == 422
+    assert client.patch("/api/campaigns/10", json={"name": "  "}).status_code == 422
 
 
 def test_switch_campaign_and_stream(client, keitaro, campaign):
